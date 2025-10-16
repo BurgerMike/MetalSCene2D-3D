@@ -49,13 +49,13 @@ public enum FormaKitAdapter {
 
         for i in 0..<(points.count - 1) {
             let a = toSIMD(points[i]);     let b = toSIMD(points[i+1])
-            verts.append(Vtx(pos: SIMD4<Float>(a, 1), col: color))
-            verts.append(Vtx(pos: SIMD4<Float>(b, 1), col: color))
+            verts.append(Vtx(SIMD4<Float>(a, 1), color))
+            verts.append(Vtx(SIMD4<Float>(b, 1), color))
         }
         if closed {
             let a = toSIMD(points.last!);  let b = toSIMD(points.first!)
-            verts.append(Vtx(pos: SIMD4<Float>(a, 1), col: color))
-            verts.append(Vtx(pos: SIMD4<Float>(b, 1), col: color))
+            verts.append(Vtx(SIMD4<Float>(a, 1), color))
+            verts.append(Vtx(SIMD4<Float>(b, 1), color))
         }
 
         let byteCount = verts.count * MemoryLayout<Vtx>.stride

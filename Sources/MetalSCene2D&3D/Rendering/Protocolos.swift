@@ -1,32 +1,36 @@
 import MetalKit
-import simd
 
-public enum RenderMode { case hud2DOnly, world3DOnly, both }
+public enum RenderMode {
+    case hud2DOnly
+    case world3DOnly
+    case both
+}
 
 public struct DrawItem {
     public let buffer: MTLBuffer
     public let vertexCount: Int
     public init(buffer: MTLBuffer, vertexCount: Int) {
-        self.buffer = buffer; self.vertexCount = vertexCount
+        self.buffer = buffer
+        self.vertexCount = vertexCount
     }
 }
 
-/// Proveedor de escena (lo implementas para cambiar contenido)
 public protocol SceneProvider: AnyObject {
     func buildResources(device: MTLDevice, viewSize: CGSize)
-    func update(dt: Double)
-    func hud2DItems() -> [DrawItem]     // clip-space (MVP identidad)
-    func world3DItems() -> [DrawItem]   // mundo 3D (usa MVP 3D)
+    func update(dt: CFTimeInterval)
+    func hud2DItems() -> [DrawItem]
+    func world3DItems() -> [DrawItem]
 }
 
-@objc public protocol InputHandler: AnyObject {
+@objc public protocol MetalCanvasGestureHandling: AnyObject {
     @objc optional func handlePan(_ g: NSPanGestureRecognizer)
     @objc optional func handleMagnify(_ g: NSMagnificationGestureRecognizer)
-    @objc optional func handleScroll(_ e: NSEvent)
+    @objc optional func handleRotate(_ g: NSRotationGestureRecognizer)
 }
 
-public protocol MetalRenderable: AnyObject, MTKViewDelegate, InputHandler {
+public protocol MetalRenderable: MTKViewDelegate {
     var queue: MTLCommandQueue? { get set }
     func configure(view: MTKView, mode: RenderMode, provider: SceneProvider)
+    func updateMode(_ newMode: RenderMode)
 }
 

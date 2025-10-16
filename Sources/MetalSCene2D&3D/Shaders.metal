@@ -1,31 +1,46 @@
 #include <metal_stdlib>
 using namespace metal;
 
-struct GridVertex {
-    float3 position;
-    float4 color;
+struct Vtx {
+    float4 pos;
+    float4 col;
 };
 
-struct GridUniforms {
+struct Uniforms {
     float4x4 mvp;
 };
 
-struct VOut {
+struct VSOut {
     float4 position [[position]];
     float4 color;
 };
 
-vertex VOut vtx_color3d(uint vid [[vertex_id]],
-                        const device GridVertex *verts [[buffer(0)]],
-                        constant GridUniforms &U [[buffer(1)]])
+// Pipeline principal (Renderer3D)
+vertex VSOut vs_main(uint vid [[vertex_id]],
+                     const device Vtx *inV [[buffer(0)]],
+                     constant Uniforms &U [[buffer(1)]])
 {
-    VOut o;
-    o.position = U.mvp * float4(verts[vid].position, 1.0);
-    o.color = verts[vid].color;
+    VSOut o;
+    o.position = U.mvp * inV[vid].pos;
+    o.color    = inV[vid].col;
     return o;
 }
 
-fragment float4 frag_color(VOut in [[stage_in]]) {
+fragment float4 fs_main(VSOut in [[stage_in]]) {
+    return in.color;
+}
+
+// Pipeline de la rejilla (Grid3D)
+vertex VSOut vtx_color3d(uint vid [[vertex_id]],
+                         const device Vtx *inV [[buffer(0)]],
+                         constant Uniforms &U [[buffer(1)]]) {
+    VSOut o;
+    o.position = U.mvp * inV[vid].pos;
+    o.color = inV[vid].col;
+    return o;
+}
+
+fragment float4 frag_color(VSOut in [[stage_in]]) {
     return in.color;
 }
 

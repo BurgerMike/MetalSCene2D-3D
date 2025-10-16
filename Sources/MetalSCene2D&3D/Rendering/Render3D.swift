@@ -1,8 +1,9 @@
 import MetalKit
 import simd
 import CoreGraphics
+import QuartzCore
 
-public final class Renderer3D: NSObject, MetalRenderable {
+public final class Renderer3D: NSObject, MetalRenderable, MetalCanvasGestureHandling {
     public var queue: MTLCommandQueue?
     private var pipeline: MTLRenderPipelineState!
     private var uBuf: MTLBuffer!
@@ -15,22 +16,52 @@ public final class Renderer3D: NSObject, MetalRenderable {
     private var lastTS: CFTimeInterval = CACurrentMediaTime()
     private var fovY: Float = .pi/3, nearZ: Float = 0.01, farZ: Float = 100
 
-    public override init() {}
+    private var grid: Grid3D?
+
+    public override init() { }
+
+    public func updateMode(_ newMode: RenderMode) { self.mode = newMode }
 
     public func configure(view: MTKView, mode: RenderMode, provider: SceneProvider) {
         self.mode = mode
         self.provider = provider
         guard let device = view.device else { return }
-        let lib = try! device.makeDefaultLibrary(bundle: .module) // shaders del package
+
+        // Librería Metal (SPM vs app)
+        let lib: MTLLibrary
+        do {
+            #if SWIFT_PACKAGE
+            lib = try device.makeDefaultLibrary(bundle: .module)
+            #else
+            guard let l = device.makeDefaultLibrary() else { throw NSError(domain: "Shaders", code: -1) }
+            lib = l
+            #endif
+        } catch {
+            fatalError("No se pudo cargar la librería Metal: \(error)")
+        }
+
+        guard let vfn = lib.makeFunction(name: "vs_main"),
+              let ffn = lib.makeFunction(name: "fs_main") else {
+            fatalError("Faltan funciones vs_main/fs_main en Shaders.metal")
+        }
 
         let desc = MTLRenderPipelineDescriptor()
-        desc.vertexFunction   = lib.makeFunction(name: "vs_main")
-        desc.fragmentFunction = lib.makeFunction(name: "fs_main")
-        desc.colorAttachments[0].pixelFormat = view.colorPixelFormat
-        // sin depth
+        desc.vertexFunction   = vfn
+        desc.fragmentFunction = ffn
+        desc.colorAttachments[0].pixelFormat   = view.colorPixelFormat
+        desc.depthAttachmentPixelFormat        = view.depthStencilPixelFormat
+        desc.sampleCount = view.sampleCount
 
-        pipeline = try! device.makeRenderPipelineState(descriptor: desc)
+        do {
+            pipeline = try device.makeRenderPipelineState(descriptor: desc)
+        } catch {
+            fatalError("Pipeline error: \(error)")
+        }
+
         uBuf = device.makeBuffer(length: MemoryLayout<Uniforms>.stride, options: .storageModeShared)
+
+        // Rejilla estilo Blender (opcional)
+        grid = try? Grid3D(device: device, library: lib, spacing: 1.0, halfLines: 20, axisLength: 50)
 
         provider.buildResources(device: device, viewSize: view.drawableSize)
         updateEyeFromOrbit()
@@ -41,10 +72,11 @@ public final class Renderer3D: NSObject, MetalRenderable {
     }
 
     public func draw(in view: MTKView) {
-        // dt
+        // dt estable
         let now = CACurrentMediaTime()
         var dt = now - lastTS; lastTS = now
-        if !dt.isFinite || dt <= 0 { dt = 1/240.0 }; if dt > 0.050 { dt = 0.050 }
+        if !dt.isFinite || dt <= 0 { dt = 1/240.0 }
+        if dt > 0.050 { dt = 0.050 }
         provider?.update(dt: dt)
 
         guard let rpd = view.currentRenderPassDescriptor,
@@ -63,6 +95,10 @@ public final class Renderer3D: NSObject, MetalRenderable {
             memcpy(uBuf.contents(), &U3D, MemoryLayout<Uniforms>.stride)
             enc.setVertexBuffer(uBuf, offset: 0, index: 1)
 
+            // Dibuja rejilla primero
+            grid?.draw(encoder: enc, mvp: U3D.mvp)
+
+            // Luego los items de la escena
             for item in provider?.world3DItems() ?? [] where item.vertexCount > 0 {
                 enc.setVertexBuffer(item.buffer, offset: 0, index: 0)
                 enc.drawPrimitives(type: .line, vertexStart: 0, vertexCount: item.vertexCount)
@@ -86,7 +122,7 @@ public final class Renderer3D: NSObject, MetalRenderable {
         cb.commit()
     }
 
-    // MARK: - cámara
+    // MARK: - cámara utilidades
     private func updateEyeFromOrbit() {
         let minP: Float = -.pi*0.49, maxP: Float = .pi*0.49
         pitch = max(min(pitch, maxP), minP)
@@ -107,12 +143,15 @@ public final class Renderer3D: NSObject, MetalRenderable {
         let x = simd_normalize(simd_cross(up, z))
         let y = simd_cross(z, x)
         let t = SIMD3<Float>(-simd_dot(x, eye), -simd_dot(y, eye), -simd_dot(z, eye))
-        return simd_float4x4(SIMD4<Float>(x.x,y.x,z.x,0), SIMD4<Float>(x.y,y.y,z.y,0),
-                             SIMD4<Float>(x.z,y.z,z.z,0), SIMD4<Float>(t.x,t.y,t.z,1))
+        return simd_float4x4(
+            SIMD4<Float>(x.x,y.x,z.x,0),
+            SIMD4<Float>(x.y,y.y,z.y,0),
+            SIMD4<Float>(x.z,y.z,z.z,0),
+            SIMD4<Float>(t.x,t.y,t.z,1))
     }
 
     // MARK: - gestos
-    public func handlePan(_ g: NSPanGestureRecognizer) {
+    @objc public func handlePan(_ g: NSPanGestureRecognizer) {
         #if os(macOS)
         let p = g.translation(in: g.view)
         yaw   -= Float(p.x) * 0.005
@@ -120,7 +159,7 @@ public final class Renderer3D: NSObject, MetalRenderable {
         updateEyeFromOrbit()
         #endif
     }
-    public func handleMagnify(_ g: NSMagnificationGestureRecognizer) {
+    @objc public func handleMagnify(_ g: NSMagnificationGestureRecognizer) {
         #if os(macOS)
         let f = Float(1.0 + g.magnification)
         radius = max(0.5, min(20.0, radius * (1.0 + (1.0 - f))))
